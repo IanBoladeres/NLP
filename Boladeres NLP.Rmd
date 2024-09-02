@@ -1,0 +1,243 @@
+---
+title: "NLP Assignament"
+author: "Boladeres, Ian"
+date: "2024-02-13"
+output: word_document
+---
+
+# Loading packages and data
+
+```{r,echo=FALSE}
+#NLP Assignment
+#Advanced Research Methods (MIPE) - Natural Language Processing
+#January 2024
+
+#INDEX
+#1.Prepare environment
+#2.Import data
+#3.Questions
+
+################################################################################
+###1. PREPARE ENVIRONMENT#######################################################
+################################################################################
+rm(list = ls())
+## install.packages(c("quanteda","quanteda.textmodels","quanteda.textstats","quanteda.textplots","readtext","seededlda","conText","text2vec","tidyverse" ))
+
+#Open packages (install them first if necessary)
+library(quanteda)
+library(quanteda.textmodels)
+library(quanteda.textstats)
+library(quanteda.textplots)
+library(readtext)
+library(seededlda)
+library(conText) 
+library(text2vec)
+library(tidyverse)
+library(dplyr)
+
+#Set working directory
+setwd("E:/Data and Maps/NLP")
+
+################################################################################
+###2. IMPORT DATA###############################################################
+################################################################################
+
+#Import csv file
+#Subset of the dataset from Osnabrügge, M.; Hobolt, S.B.; Rodon, T. (2021). "Playing to the Gallery: Emotive Rhetoric in Parliaments", American Political Science Review, 115(3), 885-899
+UK_2019 <- readtext(paste0("./UK_2019.csv"), text_field = "text")
+
+#Import GloVe pre-embeddings
+glove_1 <- readRDS('./glove_1.rds')
+glove_2 <- readRDS('./glove_2.rds')
+glove <- cbind(glove_1, glove_2)
+remove(glove_1, glove_2)
+```
+
+# Code
+
+1st I construct the corpus. The variable that contains the text is called "text".
+
+```{r}
+UK_2019_corpus <- corpus(UK_2019, text_field = "text")
+```
+
+Then, I tokenize the text. The first part of the code deletes punctuation, numbers and symbols that do not increase the explanatory power of our model. Next, I compound names that might appear such as Great Britain, climate change or the European Union. Finally, the last part of the code deletes common words used in English and I decided to remove padding, deleting the empty spaces, so are not counted, at the expense of altering the length of the original text, but I believe that keeping the original length of the text it is not important for our analysis.
+
+```{r}
+UK_2019_tokens <- UK_2019_corpus %>%
+  tokens(remove_punct = TRUE, remove_numbers = TRUE, remove_symbol = TRUE) %>%
+  tokens_compound(pattern = phrase(c('United States', 'United Kingdom','European Union','European Commission','Great Britain','climate change','Hong Kong'))) %>%
+  tokens_select(pattern = stopwords("en"), selection = "remove", padding = FALSE)
+```
+
+```{r}
+UK_2019_dfm <-dfm(UK_2019_tokens)
+```
+
+I decided to divide the data frame by the most relevant political parties, the Conservatives, Labour, Scottish National Party and Liberal Democrats; leaving aside minority parties such as the Greens. This will be useful to use visual representation of the most important topics for each selected party.
+
+```{r}
+UK_2019_dfm_party <- UK_2019_corpus %>%
+  corpus_subset(party %in% c("Conservative","Labour","Scottish National Party","Liberal Democrats")) %>%
+  tokens(remove_punct = TRUE, remove_numbers = TRUE, remove_symbol = TRUE) %>%
+  tokens_compound(pattern = phrase(c('United States', 'United Kingdom','European Union','European Commission','Great Britain','climate change','Hong Kong'))) %>%
+  tokens_select(pattern = stopwords("en"), selection = "remove", padding = FALSE) %>%
+  dfm() %>%
+  dfm_group(groups = party)
+UK_2019_dfm_party <- dfm_remove(UK_2019_dfm_party, c("s","sir","gentleman","hon","lady"))
+```
+
+```{r}
+nfeat(UK_2019_dfm)
+```
+
+44432 tokens seems enough tokens to analyse.
+
+```{r}
+topfeatures(UK_2019_dfm, 40)
+UK_2019_dfm <- dfm_remove(UK_2019_dfm, c("s","sir","gentleman","hon"))
+```
+
+The "topfeatures" helps to assess if we left out some expressions that should be compounded. I realise that "s" appears 31765, probably a result of deleting symbols and specifically the "Apostrophe". This shouldn't be a problem for our analysis, but I decided to delete the "s" to reduce the corpus size. In the next part of the code, I realized that some other common expressions such as "sir", "gentleman", "hon" or "lady" appeared a lot in the text and are parliamentary formality. Therefore, I decided to delete them.
+
+The next step is to prepare our frequency analysis. I decide to keep words that appear at least in the 80% and deleting words that appear too much.
+
+## Table 1
+
+```{r}
+UK_2019_dfm_freq<-dfm_trim(UK_2019_dfm, min_termfreq = 0.8, max_termfreq=0.99, termfreq_type = "quantile")
+frequency <- textstat_frequency(UK_2019_dfm_freq, n = 50)
+head(frequency, 50)
+```
+
+## Figure 1
+
+```{r}
+textplot_wordcloud(UK_2019_dfm_party, comparison = TRUE,labelcolor=TRUE, max_words = 200)
+```
+
+I would like to observe what parties use more times the word brexit.
+
+## Figure 2
+
+```{r}
+brexit <- UK_2019_tokens %>%
+  tokens_select(pattern = c("brexit")) %>%
+  dfm() %>%
+  convert(to = "data.frame") %>%
+  select(-c(doc_id)) %>%
+  cbind(UK_2019) %>%
+  group_by(party) %>%
+  summarise(mean_brexit=mean(brexit))
+ggplot(brexit) +
+  geom_col(aes(party, mean_brexit)) +
+  theme_minimal()
+```
+
+This graph will show the most recurrent topics by gender.
+
+## Figure 3
+
+```{r}
+textstat <- textstat_keyness(UK_2019_dfm_freq, docvars(UK_2019_corpus, "female") == "1")
+textplot_keyness(textstat)
+```
+
+Building of the topic model. I decided that the model selected 20 topics.
+
+## Table 2
+
+```{r}
+# topicmodel_UK <- textmodel_lda(UK_2019_dfm_freq, k = 20)
+# terms(topicmodel_UK, 20)
+```
+
+I had some problems with the printing of the topicmodel_UK
+
+![](images/Captura-01.png)
+
+![](images/Captura-03.PNG)
+
+![](images/Captura-04.PNG)
+
+Word embedding. I will build a new token now with padding TRUE to keep the original proportions of the text.
+
+```{r}
+UK_2019_tokens_padding <-tokens(UK_2019_corpus, remove_punct = TRUE, remove_numbers = TRUE, remove_symbol = TRUE) %>%
+  tokens_compound(pattern = phrase(c('United States', 'United Kingdom','European Union','European Commission','Great Britain','climate change','Hong Kong'))) %>%
+  tokens_select(pattern = stopwords("en"), selection = "remove", padding = TRUE)
+```
+
+I will use the standard window of 6 words.
+
+I will analysis the topic of climate change. For this reason, as keywords I will use "climate_change", "green", "emissions", "climate" and "ecology", a group of words that is closely related with the topic.
+
+```{r}
+climate_tokens <- tokens_context(x= UK_2019_tokens_padding, pattern = c("climate_change","green","emissions","climate"), window = 6L)
+climate_dfm <-dfm(climate_tokens)
+```
+
+Now I build the co-occurrence matrix and the transformation matrix. I will use the pre-trained word embedding set.
+
+```{r}
+UK_fcm <- fcm(UK_2019_tokens_padding, context = "window", window = 6, count = "frequency",tri = FALSE)
+transformation_UK <- compute_transform(x = UK_fcm, pre_trained = glove, weighting = 500)
+```
+
+Next, I create the embedding matrix. I am specifically interested on how different parties relate the different focal terms I selected.
+
+```{r}
+UK_dem <- dem(climate_dfm, pre_trained = glove, transform = TRUE,
+                transform_matrix = transformation_UK, verbose = TRUE)
+
+UK_embeddings <- dem_group(UK_dem, groups =
+                               UK_dem@docvars$party)
+dim(UK_embeddings)
+```
+
+Now I will find the nearest neighbours.
+
+## Table 3
+
+```{r}
+climate_nns <- nns(UK_embeddings, pre_trained = glove, N = 10, candidates = UK_embeddings@features, as_list = FALSE)
+climate_nns <- arrange(climate_nns, target, rank)
+print(climate_nns)
+```
+
+```{r}
+cosine2 = cos_sim(UK_embeddings, pre_trained = glove, features = c("climate", "economy"), as_list = FALSE)
+cosine2
+```
+
+# Questions
+
+## 1. What were the main topics under discussion in the British House of Commons in 2019?
+
+Table 1 already shows some preliminary results on the main topics discussed in the House of Commons in 2019. In the top 10 most featured words, we find non-sensical words such as key, agreed or important. Those interesting to us are "forces" that might refer to armed forces or military forces, reflecting the growing international stability and the rising relevance of military forces. In the ninth position, we already find "climate change". If we had data for previous years we might be able to visualize how the importance of this topic has been rising for the last decades.
+
+The word cloud (Figure 1) gives us some clues about which were the relevant topics of discussion by the main political parties. For the Conservative Party is difficult to identify a clear topic, but some words connected to negotiations appear repeatedly, such as "agreement", "committed", "ensure" or "support". Meanwhile, in the case of the Labour Party is clearer, as the words are oriented towards public services in general (public, funding, services), referring to some specific services such as education (schools, children), housing or law enforcement, as well as possible reference to the state of these services with words such as "cuts" or "austerity" that might reflect the worsening of British public services. In the case of the Liberal Democrats we find something similar, but with specific reference to the health system (NHS, health, radiotherapy, treatment) and a special interest in climate-related issues (climate, fossil). Finally, the Scottish National Party makes a lot of references to Scotland, reflecting their heavy regional implementation, and are from the parties selected, those that made more references to Brexit and the EU, perhaps because Brexit was a reality accepted by the rest of the parties but not in the case of the SNP. It is more understandable if we observe a map of the results of the Referendum, in which most of Scotland voted to "Remain" in great contrast to the rest of the UK. Part of the current strategy of the SNP is, in light of the results of the Brexit Referendum, to repeat the Scottish Referendum of independence, expecting that the desire for secession from the UK has increased, and rejoining the European Union. Figure 2 confirms my idea that one of the parties that used the most the word Brexit was the SNP, just behind the Green. Furthermore, another regional party, the Plaud Cymru also used recurrently the word Brexit.
+
+Figure 3 divides the dataset by the gender of the member of the British House of Commons. We can observe a divergence in the topics that are more prominent among female (target) parliamentary members and their male counterparts (reference). Female members made more mentions of baby, youth, woman, disabled, and vulnerable; reflecting the gender roles of British society in which women are responsible for caring for others, to care for those vulnerable. Meanwhile, in the case of males, words related to international politics (negotiations, treaties, deals, Hong Kong, China, ship, United States) are more prominent. This graph is a great representation of the gender biases in politics and the difference between "soft topics" or "soft politics" related to social services; and "hard topics" or "hard politics" related to economy, international relations or defence.
+
+Finally, the analysis of the topic model reveals the following:
+
+Topics 16 and 17 are non-sensical and topics 5 and 11 are composed of parliamentary jargon. Topic 1 is about racism and antisemitism, a relevant topic in the UK, that has gained relevance thanks to the internet and the proliferation of xenophobic attitudes. Furthermore, the recurrent mentions of antisemitism might be due to the scandal with Labour candidate Jeremy Corbyn and whether he was or not an antisemite.
+
+Topic 2 is linked to public services, specifically to education. From the wordcloud we know that one of the parties more vocal about this topic was the Labour Party, denouncing the cuts on the budget and the worsening state of the educational system in the UK. Similarly, topic 12 is about healthcare, being one of the most prominent parties speaking about the healthcare system the Liberal Democrats. To end the public services block, topic 14 is about law enforcement and policing.
+
+All of these public services must be funded by a budget and topic 4 is about this, fiscal discussion and financial jargon. Topic 15 is also about economic policy in general, in specific to pensions, wages and employment. Topic 3 is about trade, making references to agriculture, the manufacturing sector and deals. This is relevant due to the Brexit and the negotiations with the European Union. Connected with this topic is the topic about Ireland (Topic 10), a candent topic in the negotiations with the EU, due to the problems that could arise if the UK decided to build a "strong border" with the Republic of Ireland and how the accession of UK to the EU helped to dissipate the tensions with the Irish population and the IRA. Some features of this topic make references to creating an agreement to solve the problem and reference to the history of anglo-british relations (the Friday, referring to the Good Friday Agreement).
+
+Topic 8 is centred around international relations, although there is no clear focus, there are different features that connect to different subtopics such as relations with China, the UN, humanitarian policy or the Middle East. Topic 20 also refers to international relations specifically to the defence sector, nuclear power, the importance of technology to the military and the Commonwealth. Topic 7 is about immigration, in particular, it seems to deal with asylum seekers.
+
+Topic 6 is about infrastructure, development and transport, the creation of development projects, road and railway expansions. Topic 13 seems to be about elections and democracy, appearing jargon about normative elements of democracy, such as consensus, confidence or control (all features that we can link to positive elements of democracy). That the SNP is in this topic might reflect the strategy of the SNP to repeat the Scottish Referendum of Independence. Topic 19 seems to be about sports and football, but it is not clear.
+
+Finally, topic 18 is about gender and LGBT, with references to sexual and domestic violence, and equality. Topic 9 is about climate change and the green transition for green economic development, specifically to reduce emissions and find alternatives to the energy system.
+
+## 2. Select one keyword (or a group of keywords) of one of the topics that you have identified in the previous question and examine the extent to which its usage varied across the political parties represented in Parliament
+
+I focus on the topic of climate change. Table 2 gives the results of the embedding by parties. The two parties with features with closer affinity to my selected group of words are first the Liberal Democrats Party and the Greens. A closer look at how both parties treat the same topic, the Liberal Democrats emphasize the topic related to energy, being the closest related word to my word selection, with a value of 0.65. Also, resources are a relevant word in their discourses related to climate change, emphasizing the need and belief of the Liberal Democrats to transition from our current energy model to a greener one. Also the word global might refer to the necessity of cooperation between nations. In the case of the Greens, global is their first word, implying that the necessity for global cooperation is more important in the Green circles than in the Liberal Democrats. Moreover, the word crisis appears in the top 4, a word that does not appear in any other party. This may be an interesting feature of the Green narrative towards climate change, emphasizing the crisis it supposes.
+
+The following two parties for which climate change is a relevant topic are the Labour Party and the Conservatives. Both speak in similar terms about climate change, although in the case of the Conservative Party more words about actions like "change" or "make", which is a normal feature taking into account that it was the Party in office during 2019. A party in office speaks about the things can or not do, meanwhile, the parties in the opposition are more prone to speak about normative issues or how they would act. Interestingly, this is a feature shared by the SNP, that the most well-connected words are verbs, but in the end, they are also the ruling party in Scotland.
+
+The Democratic Unionist and the Plaud Cymru are the two parties (besides others) that are less connected to the climate change issue, although not that much unconnected. The latter uses words connected to infrastructure projects and development, whereas in the case of the former appear a lot of verbs.
