@@ -36,7 +36,7 @@ library(tidyverse)
 library(dplyr)
 
 #Set working directory
-setwd("E:/Data and Maps/NLP")
+# setwd("")
 
 ################################################################################
 ###2. IMPORT DATA###############################################################
